@@ -2,3 +2,8 @@ azure-ai-projects>=2.0.0a20250915020
 openai
 azure-identity
 python-dotenv
+
+# Tracing & Telemetry (for capturing duration, tokens, cost)
+opentelemetry-sdk
+azure-core-tracing-opentelemetry
+azure-monitor-opentelemetry

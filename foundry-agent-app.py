@@ -25,8 +25,15 @@ Key Concepts:
 3. Conversations: Used for multi-turn interactions. The conversation ID maintains
    all context server-side across multiple exchanges.
 
-4. Response Chaining: For follow-up questions, use previous_response_id to maintain
-   both conversation context and MCP approval chains.
+4. Response Chaining: For follow-up questions, we add user messages to the
+   conversation first, then request agent responses with conversation ID.
+   This ensures all user queries link to the conversation in traces.
+
+5. Tracing: Telemetry is sent to Azure Application Insights for observability.
+   View traces in the "Tracing" tab of your Foundry project portal.
+   Captures: duration, token usage, model info, and message content (if enabled).
+   Note: MCP approval continuations use previous_response_id and may show "--"
+   for Conversation ID in traces, which is expected behavior.
 
 MCP Approval Flow:
 ------------------
@@ -46,6 +53,10 @@ Required Environment Variables:
 - AZURE_AI_FOUNDRY_PROJECT_ENDPOINT: The endpoint URL for your AI Foundry project
 - AZURE_AI_FOUNDRY_AGENT_NAME: The name of the agent configured in AI Foundry
 
+Optional Environment Variables (Tracing):
+-----------------------------------------
+- OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT: Set to "true" to trace message content
+
 Authentication:
 ---------------
 Uses DefaultAzureCredential which supports multiple authentication methods.
@@ -59,11 +70,21 @@ Type 'new' to start a new conversation.
 import os
 import sys
 from dotenv import load_dotenv
+
+# Load environment variables FIRST (before tracing setup)
+# This ensures OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT is available
+load_dotenv()
+
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
 
-# Load environment variables from .env file
-load_dotenv()
+# Tracing imports for Azure Monitor / Application Insights
+from azure.core.settings import settings
+settings.tracing_implementation = "opentelemetry"  # Must be set before other tracing imports
+
+from opentelemetry import trace
+from azure.monitor.opentelemetry import configure_azure_monitor
+from azure.ai.projects.telemetry import AIProjectInstrumentor
 
 # =============================================================================
 # INITIALIZATION (Done once at startup for optimal performance)
@@ -79,12 +100,42 @@ project_client = AIProjectClient(
     credential=DefaultAzureCredential(),
 )
 
+# =============================================================================
+# TRACING SETUP (Azure Monitor / Application Insights)
+# =============================================================================
+# Enable telemetry to capture: duration, token usage, cost, and message content
+# Traces appear in the "Tracing" tab of your Foundry project portal
+#
+# The Application Insights connection string is automatically retrieved from
+# your Foundry project configuration. Make sure Application Insights is enabled
+# in your Foundry project settings.
+#
+# IMPORTANT: Instrumentation must be enabled BEFORE getting the OpenAI client
+# =============================================================================
+
+try:
+    app_insights_conn_str = project_client.telemetry.get_application_insights_connection_string()
+    if app_insights_conn_str:
+        configure_azure_monitor(connection_string=app_insights_conn_str)
+        # Enable AI Projects instrumentation BEFORE getting OpenAI client
+        # This instruments the client to capture full request/response data
+        AIProjectInstrumentor().instrument()
+        print("Tracing enabled: Azure Application Insights + AI Projects instrumentation")
+        print(f"Content capture: {os.environ.get('OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT', 'false')}")
+    else:
+        print("Tracing: Application Insights not configured in Foundry project")
+except Exception as e:
+    print(f"Tracing: Could not configure ({e})")
+
+# Get a tracer for creating custom spans
+tracer = trace.get_tracer(__name__)
+
 # Get the agent name from environment and cache it
 agent_name = os.environ["AZURE_AI_FOUNDRY_AGENT_NAME"]
 print(f"Agent: {agent_name}")
 
-# Get the OpenAI-compatible client (one-time setup)
-# This client maintains connection pooling for optimal performance
+# Get the OpenAI-compatible client AFTER instrumentation is enabled
+# This ensures all API calls are traced properly
 openai_client = project_client.get_openai_client()
 
 
@@ -134,8 +185,9 @@ def process_response_with_mcp_approval(response):
             })
         
         # Continue the response with approvals
-        # Note: Use previous_response_id WITHOUT conversation parameter
-        # to maintain the approval chain correctly
+        # Note: MCP approval continuations MUST use previous_response_id to link
+        # the approval back to the specific response that requested it.
+        # These will show as "--" for Conversation ID in traces, which is expected.
         response = openai_client.responses.create(
             extra_body={"agent": {"name": agent_name, "type": "agent_reference"}},
             input=approvals,
@@ -192,25 +244,44 @@ def main():
                 continue
             
             # Send message to the agent
-            # - For the first message, use conversation.id
-            # - For follow-ups, use previous_response_id to maintain MCP approval chain
-            if last_response is None:
-                # First message in the conversation
-                response = openai_client.responses.create(
-                    conversation=conversation.id,
-                    extra_body={"agent": {"name": agent_name, "type": "agent_reference"}},
-                    input=user_input,
-                )
-            else:
-                # Follow-up message - use previous_response_id for context + approvals
-                response = openai_client.responses.create(
-                    previous_response_id=last_response.id,
-                    extra_body={"agent": {"name": agent_name, "type": "agent_reference"}},
-                    input=user_input,
-                )
-            
-            # Process any MCP approval requests (agent may need to query knowledge base)
-            response = process_response_with_mcp_approval(response)
+            # - First message: use conversation.id to establish context
+            # - Follow-ups: use previous_response_id to maintain MCP approval chain
+            # Note: Follow-up traces may show "--" for Conversation ID in the portal,
+            # but the conversation context is still maintained server-side.
+            # Wrap in a tracer span to capture telemetry (duration, tokens, etc.)
+            with tracer.start_as_current_span("agent_chat") as span:
+                # Add custom attributes to the span for filtering/searching in traces
+                span.set_attribute("conversation.id", conversation.id)
+                span.set_attribute("agent.name", agent_name)
+                span.set_attribute("user.input_length", len(user_input))
+                
+                if last_response is None:
+                    # First message in the conversation
+                    response = openai_client.responses.create(
+                        conversation=conversation.id,
+                        extra_body={"agent": {"name": agent_name, "type": "agent_reference"}},
+                        input=user_input,
+                    )
+                else:
+                    # Follow-up message: use previous_response_id to maintain MCP chain
+                    # Note: Cannot include conversation param - API rejects it with previous_response_id
+                    # Traces for follow-ups may not appear in portal's main trace list,
+                    # but are visible when clicking on the first message's conversation detail
+                    response = openai_client.responses.create(
+                        previous_response_id=last_response.id,
+                        extra_body={"agent": {"name": agent_name, "type": "agent_reference"}},
+                        input=user_input,
+                    )
+                
+                # Process any MCP approval requests (agent may need to query knowledge base)
+                response = process_response_with_mcp_approval(response)
+                
+                # Add response info to the span
+                span.set_attribute("response.id", response.id)
+                if hasattr(response, 'usage') and response.usage:
+                    span.set_attribute("usage.input_tokens", response.usage.input_tokens or 0)
+                    span.set_attribute("usage.output_tokens", response.usage.output_tokens or 0)
+                    span.set_attribute("usage.total_tokens", response.usage.total_tokens or 0)
             
             # Store the response for chaining the next message
             last_response = response
@@ -219,7 +290,12 @@ def main():
             
         except KeyboardInterrupt:
             # Handle Ctrl+C gracefully
-            print("\n\nExiting... Goodbye!")
+            # Force flush traces before exiting
+            from opentelemetry.sdk.trace import TracerProvider
+            provider = trace.get_tracer_provider()
+            if hasattr(provider, 'force_flush'):
+                provider.force_flush()
+            print("\n\nTraces flushed. Exiting... Goodbye!")
             sys.exit(0)
         except Exception as e:
             print(f"\nError: {e}\n")

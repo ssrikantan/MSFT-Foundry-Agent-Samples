@@ -162,6 +162,49 @@ All scripts use `DefaultAzureCredential` which supports multiple authentication 
 3. **Environment Variables** - Set `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_TENANT_ID`
 4. **Visual Studio Code** - Uses VS Code Azure account
 
+## Tracing & Telemetry
+
+The `foundry-agent-app.py` includes built-in tracing to Azure Application Insights, capturing:
+
+- **Duration**: How long each request takes
+- **Token Usage**: Input/output tokens per request
+- **Custom Attributes**: Conversation ID, agent name, response IDs
+- **Child Spans**: MCP tool calls, model invocations
+
+### Setup
+
+1. **Enable Application Insights** in your Azure AI Foundry project settings
+2. **Install tracing packages** (included in requirements.txt):
+   ```powershell
+   pip install opentelemetry-sdk azure-core-tracing-opentelemetry azure-monitor-opentelemetry
+   ```
+3. Run the app - tracing is automatically configured
+
+### View Traces
+
+Open your Azure AI Foundry project in the portal and navigate to the **Tracing** tab to see:
+- Request durations
+- Token consumption
+- Error traces
+- MCP tool call details
+
+### Environment Variables (Optional)
+
+```env
+# Include message content in traces (may contain sensitive data)
+OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true
+
+# Disable automatic tracing (not recommended)
+AZURE_TRACING_GEN_AI_INSTRUMENT_RESPONSES_API=false
+```
+
+### Azure Container Apps
+
+When deploying to Azure Container Apps, tracing works automatically if:
+1. Your Foundry project has Application Insights enabled
+2. The container has network access to Application Insights
+3. `DefaultAzureCredential` can authenticate (via Managed Identity)
+
 ## Project Structure
 
 ```
