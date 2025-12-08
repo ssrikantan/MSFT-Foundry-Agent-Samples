@@ -72,8 +72,15 @@ import sys
 from dotenv import load_dotenv
 
 # Load environment variables FIRST (before tracing setup)
-# This ensures OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT is available
 load_dotenv()
+
+# =============================================================================
+# TRACING CONTENT RECORDING - Must be set BEFORE importing Azure SDK
+# =============================================================================
+# Enable content recording for traces (messages, tool calls, responses)
+# This setting is required by azure-core-tracing-opentelemetry for Azure SDKs
+# See: https://learn.microsoft.com/azure/ai-foundry/how-to/develop/trace-agents-sdk
+os.environ["AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED"] = "true"
 
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
@@ -121,7 +128,7 @@ try:
         # This instruments the client to capture full request/response data
         AIProjectInstrumentor().instrument()
         print("Tracing enabled: Azure Application Insights + AI Projects instrumentation")
-        print(f"Content capture: {os.environ.get('OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT', 'false')}")
+        print(f"Content capture: {os.environ.get('AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED', 'false')}")
     else:
         print("Tracing: Application Insights not configured in Foundry project")
 except Exception as e:
