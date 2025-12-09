@@ -42,12 +42,15 @@ Type 'new' to start a new conversation.
 
 import os
 import sys
+from pathlib import Path
 from dotenv import load_dotenv
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
 
-# Load environment variables from .env file
-load_dotenv()
+# Load environment variables from project root
+# Navigate up from clients/project/ to find .env
+project_root = Path(__file__).resolve().parent.parent.parent
+load_dotenv(project_root / ".env")
 
 # =============================================================================
 # INITIALIZATION (Done once at startup for optimal performance)

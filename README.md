@@ -4,11 +4,29 @@ This repository contains sample Python applications demonstrating how to interac
 
 ## Overview
 
+### Project Clients (`clients/project/`)
+For interacting with agents and models directly in your AI Foundry project (development/testing).
+
 | File | Description |
 |------|-------------|
 | `foundry-client-app.py` | Direct model interaction using the Responses API |
 | `foundry-agent-app.py` | Agent-based interaction with MCP (Model Context Protocol) support |
-| `ops/create-agent.py` | Programmatically create agents in Azure AI Foundry |
+
+### Published App Clients (`clients/published/`)
+For interacting with published Agent Applications (production deployment).
+
+| File | Description |
+|------|-------------|
+| `foundry-app-client.py` | Client for **published** Agent Applications |
+| `foundry-app-client-streaming.py` | Streaming client with real-time token output |
+
+### Ops Scripts (`ops/`)
+For programmatic agent management.
+
+| File | Description |
+|------|-------------|
+| `create-agent.py` | Create agents (interactive wizard or CI/CD mode) |
+| `update-agent.py` | Update existing agents (MCP settings, instructions, etc.) |
 
 ## Prerequisites
 
@@ -44,16 +62,32 @@ AZURE_AI_FOUNDRY_MODEL_DEPLOYMENT_NAME=gpt-4o
 
 # Required for foundry-agent-app.py
 AZURE_AI_FOUNDRY_AGENT_NAME=your-agent-name
+
+# Required for foundry-app-client.py (Published Agent Application)
+# Format: https://<resource>.services.ai.azure.com/api/projects/<project>/applications/<app-name>/protocols/openai
+AZURE_AI_FOUNDRY_APP_ENDPOINT=https://your-resource.services.ai.azure.com/api/projects/your-project/applications/your-app-name/protocols/openai
+
+# Knowledge Base MCP Configuration (for agents with KB tools)
+AZURE_AI_SEARCH_KB_MCP_ENDPOINT=https://<search>.search.windows.net/knowledgebases/<kb>/mcp?api-version=2025-11-01-Preview
+AZURE_AI_SEARCH_KB_CONNECTION_NAME=your-connection-name
+AZURE_AI_SEARCH_KB_SERVER_LABEL=knowledge-base
+
+# MCP Tool Approval Setting
+# "never" = auto-approve (required for published apps)
+# "always" = require manual approval
+AZURE_AI_MCP_REQUIRE_APPROVAL=never
 ```
 
 ## Usage
 
-### Foundry Client App (Direct Model Interaction)
+### Project Clients
+
+#### Foundry Client App (Direct Model Interaction)
 
 This script interacts directly with a deployed model without using an agent. Best for simple LLM interactions without tools or knowledge bases.
 
 ```powershell
-python foundry-client-app.py
+python clients/project/foundry-client-app.py
 ```
 
 **Features:**
@@ -76,7 +110,7 @@ Assistant: Paris has a population of approximately 2.1 million people in the cit
 This script interacts with a pre-configured agent that has access to knowledge bases and tools via MCP (Model Context Protocol).
 
 ```powershell
-python foundry-agent-app.py
+python clients/project/foundry-agent-app.py
 ```
 
 **Features:**
@@ -97,12 +131,95 @@ Approving MCP request: mcpr_xxx...
 Assistant: Compared to other providers...
 ```
 
-### Create Agent (Programmatic Agent Creation)
+### Published App Clients
 
-This script demonstrates how to create agents programmatically using the SDK.
+#### Foundry App Client (Published Agent Application)
+
+This script interacts with a **published** Agent Application using the OpenAI SDK directly. Published applications expose a dedicated endpoint that can be accessed without the Azure AI Projects SDK.
 
 ```powershell
+python clients/published/foundry-app-client.py
+```
+
+**Features:**
+- Connects to a published Agent Application endpoint
+- Uses OpenAI SDK with Azure AD authentication
+- Client-side conversation history management (not server-side)
+- Automatic approval of MCP tool calls
+- Type `new` to start a fresh conversation
+- Press `Ctrl+C` to exit
+
+**Key Differences from `foundry-agent-app.py`:**
+
+| Aspect | `foundry-agent-app.py` | `foundry-app-client.py` |
+|--------|------------------------|-------------------------|
+| Target | Unpublished agent in project | Published Agent Application |
+| SDK | Azure AI Projects SDK | OpenAI SDK directly |
+| Conversation | Server-side (Foundry API) | Client-side (local history) |
+| Endpoint | Project endpoint + agent name | Full application endpoint URL |
+| Use Case | Development/testing | Production deployment |
+
+**Example:**
+```
+Connected to Published Agent Application!
+Type 'new' to start a fresh conversation, Ctrl+C to exit.
+
+You: What's the weather in Seattle?
+Approving MCP request: mcpr_xxx...
+Assistant: The current weather in Seattle is...
+
+You: How about tomorrow?
+Approving MCP request: mcpr_xxx...
+Assistant: Tomorrow in Seattle...
+```
+
+#### Foundry App Client Streaming (Real-time Token Output)
+
+This script provides streaming responses from published Agent Applications, displaying tokens as they're generated.
+
+```powershell
+python clients/published/foundry-app-client-streaming.py
+```
+
+**Features:**
+- Real-time token streaming (see responses as they're generated)
+- Same client-side conversation history as non-streaming version
+- Immediate feedback for long responses
+- Type `new` to start a fresh conversation
+- Press `Ctrl+C` to exit
+
+### Ops Scripts (Agent Management)
+
+The `ops/` folder contains scripts for programmatic agent management.
+
+#### Create Agent
+
+Create new agents with optional Knowledge Base MCP tools:
+
+```powershell
+# Interactive mode (wizard)
 python ops/create-agent.py
+
+# Non-interactive mode (CI/CD)
+python ops/create-agent.py --non-interactive --name my-agent
+
+# With Knowledge Base MCP tool
+python ops/create-agent.py --non-interactive --name my-kb-agent --with-kb
+```
+
+#### Update Agent
+
+Update existing agents (MCP settings, instructions, description):
+
+```powershell
+# Interactive mode
+python ops/update-agent.py
+
+# Update MCP require_approval setting (uses AZURE_AI_MCP_REQUIRE_APPROVAL from .env)
+python ops/update-agent.py --non-interactive --update-mcp
+
+# Update instructions
+python ops/update-agent.py --non-interactive --instructions "New system prompt..."
 ```
 
 **Note:** Agent names must:
@@ -209,14 +326,21 @@ When deploying to Azure Container Apps, tracing works automatically if:
 
 ```
 sample-1/
-├── .env                      # Environment variables (not in git)
+├── .env                          # Environment variables (not in git)
+├── .env.example                  # Template for .env
 ├── .gitignore
 ├── README.md
-├── requirements.txt          # Python dependencies
-├── foundry-client-app.py     # Direct model interaction
-├── foundry-agent-app.py      # Agent with MCP support
+├── requirements.txt              # Python dependencies
+├── clients/
+│   ├── project/                  # Project-level clients (dev/test)
+│   │   ├── foundry-client-app.py     # Direct model interaction
+│   │   └── foundry-agent-app.py      # Agent with MCP support
+│   └── published/                # Published app clients (production)
+│       ├── foundry-app-client.py     # Non-streaming client
+│       └── foundry-app-client-streaming.py  # Streaming client
 └── ops/
-    └── create-agent.py       # Programmatic agent creation
+    ├── create-agent.py           # Create agents (interactive/non-interactive)
+    └── update-agent.py           # Update agents (MCP, instructions, etc.)
 ```
 
 ## Troubleshooting

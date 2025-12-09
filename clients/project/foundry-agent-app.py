@@ -69,10 +69,13 @@ Type 'new' to start a new conversation.
 
 import os
 import sys
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Load environment variables FIRST (before tracing setup)
-load_dotenv()
+# Load environment variables from project root FIRST (before tracing setup)
+# Navigate up from clients/project/ to find .env
+project_root = Path(__file__).resolve().parent.parent.parent
+load_dotenv(project_root / ".env")
 
 # =============================================================================
 # TRACING CONTENT RECORDING - Must be set BEFORE importing Azure SDK
