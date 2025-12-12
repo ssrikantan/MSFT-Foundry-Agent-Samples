@@ -2,23 +2,50 @@
 
 This repository contains sample Python applications demonstrating how to interact with Azure AI Foundry using the Python SDK.
 
+## Which Client Should I Use?
+
+| Scenario | Recommended Client | Why |
+|----------|-------------------|-----|
+| **Development & Testing** | `clients/project/foundry-agent-app.py` | Full features, server-side conversations, MCP approval flow |
+| **Production Applications** | `clients/project/foundry-agent-app.py` | Best capabilities, tracing, conversation management |
+| **Simple LLM Queries** | `clients/project/foundry-client-app.py` | Direct model access without agent overhead |
+| **External Sharing (Limited)** | `clients/published/foundry-app-client.py` | Isolated endpoint, no project access needed |
+
+### ⚠️ Project Clients vs Published App Clients
+
+**Project Clients are generally preferred** for most use cases:
+
+| Feature | Project Client | Published App Client |
+|---------|---------------|---------------------|
+| Conversation Management | ✅ Server-side (`conversation.id`) | ❌ Client-side only |
+| MCP Approval Flow | ✅ Full support | ❌ Must use `require_approval="never"` |
+| File Uploads | ✅ Supported | ❌ Not available |
+| Vector Stores | ✅ Supported | ❌ Not available |
+| Tracing & Telemetry | ✅ Built-in | ⚠️ Limited |
+| SDK Features | ✅ Full access | ⚠️ Responses API only |
+
+**When to use Published App Clients:**
+- Sharing a specific agent externally without exposing your project
+- Need isolated endpoint URL for a single agent
+- Separate rate limiting/quota management
+
 ## Overview
 
-### Project Clients (`clients/project/`)
-For interacting with agents and models directly in your AI Foundry project (development/testing).
+### Project Clients (`clients/project/`) — **Recommended**
+For interacting with agents and models directly in your AI Foundry project. Provides full SDK capabilities including server-side conversation management, MCP approval workflows, and integrated tracing.
 
 | File | Description |
 |------|-------------|
 | `foundry-client-app.py` | Direct model interaction using the Responses API |
-| `foundry-agent-app.py` | Agent-based interaction with MCP (Model Context Protocol) support |
+| `foundry-agent-app.py` | **Recommended** - Agent with MCP support, conversation management, tracing |
 
-### Published App Clients (`clients/published/`)
-For interacting with published Agent Applications (production deployment).
+### Published App Clients (`clients/published/`) — Limited Use Cases
+For interacting with published Agent Applications. These are simplified wrappers with reduced capabilities - use only when you need an isolated external endpoint.
 
 | File | Description |
 |------|-------------|
-| `foundry-app-client.py` | Client for **published** Agent Applications |
-| `foundry-app-client-streaming.py` | Streaming client with real-time token output |
+| `foundry-app-client.py` | Client for published Agent Applications (stateless) |
+| `foundry-app-client-streaming.py` | Streaming client with real-time token output (stateless) |
 
 ### Ops Scripts (`ops/`)
 For programmatic agent management.
@@ -80,7 +107,7 @@ AZURE_AI_MCP_REQUIRE_APPROVAL=never
 
 ## Usage
 
-### Project Clients
+### Project Clients — Recommended
 
 #### Foundry Client App (Direct Model Interaction)
 
@@ -105,18 +132,20 @@ You: What's its population?
 Assistant: Paris has a population of approximately 2.1 million people in the city proper...
 ```
 
-### Foundry Agent App (Agent with MCP Support)
+#### Foundry Agent App (Agent with MCP Support) — **Best Choice**
 
-This script interacts with a pre-configured agent that has access to knowledge bases and tools via MCP (Model Context Protocol).
+This is the **recommended client** for most use cases. It interacts with a pre-configured agent that has access to knowledge bases and tools via MCP (Model Context Protocol).
 
 ```powershell
 python clients/project/foundry-agent-app.py
 ```
 
 **Features:**
-- Connects to a named agent configured in Azure AI Foundry portal
-- Automatic approval of MCP tool calls (e.g., knowledge base queries)
-- Multi-turn conversations with context preservation
+- ✅ Connects to a named agent configured in Azure AI Foundry portal
+- ✅ Server-side conversation management (no client-side history needed)
+- ✅ Full MCP approval workflow support
+- ✅ Built-in tracing to Azure Application Insights
+- ✅ Multi-turn conversations with context preservation
 - Type `new` to start a fresh conversation
 - Press `Ctrl+C` to exit
 
@@ -131,11 +160,14 @@ Approving MCP request: mcpr_xxx...
 Assistant: Compared to other providers...
 ```
 
-### Published App Clients
+### Published App Clients — Limited Use Cases
+
+> ⚠️ **Note:** Published App Clients have significant limitations compared to Project Clients. 
+> Use these only when you need to share an agent externally without exposing your project.
 
 #### Foundry App Client (Published Agent Application)
 
-This script interacts with a **published** Agent Application using the OpenAI SDK directly. Published applications expose a dedicated endpoint that can be accessed without the Azure AI Projects SDK.
+This script interacts with a **published** Agent Application using the OpenAI SDK directly. Published applications expose a dedicated endpoint but with reduced capabilities.
 
 ```powershell
 python clients/published/foundry-app-client.py
@@ -145,19 +177,18 @@ python clients/published/foundry-app-client.py
 - Connects to a published Agent Application endpoint
 - Uses OpenAI SDK with Azure AD authentication
 - Client-side conversation history management (not server-side)
-- Automatic approval of MCP tool calls
 - Type `new` to start a fresh conversation
 - Press `Ctrl+C` to exit
 
-**Key Differences from `foundry-agent-app.py`:**
+**Limitations vs Project Client:**
 
-| Aspect | `foundry-agent-app.py` | `foundry-app-client.py` |
-|--------|------------------------|-------------------------|
-| Target | Unpublished agent in project | Published Agent Application |
-| SDK | Azure AI Projects SDK | OpenAI SDK directly |
-| Conversation | Server-side (Foundry API) | Client-side (local history) |
-| Endpoint | Project endpoint + agent name | Full application endpoint URL |
-| Use Case | Development/testing | Production deployment |
+| Aspect | Project Client ✅ | Published App Client ⚠️ |
+|--------|------------------|-------------------------|
+| Conversation | Server-side (automatic) | Client-side (manual) |
+| MCP Approval | Full workflow support | Must be `require_approval="never"` |
+| File/Vector Stores | ✅ Available | ❌ Not available |
+| Tracing | ✅ Built-in | ⚠️ Limited |
+| Use Case | All applications | External sharing only |
 
 **Example:**
 ```
@@ -165,12 +196,7 @@ Connected to Published Agent Application!
 Type 'new' to start a fresh conversation, Ctrl+C to exit.
 
 You: What's the weather in Seattle?
-Approving MCP request: mcpr_xxx...
 Assistant: The current weather in Seattle is...
-
-You: How about tomorrow?
-Approving MCP request: mcpr_xxx...
-Assistant: Tomorrow in Seattle...
 ```
 
 #### Foundry App Client Streaming (Real-time Token Output)
@@ -183,8 +209,7 @@ python clients/published/foundry-app-client-streaming.py
 
 **Features:**
 - Real-time token streaming (see responses as they're generated)
-- Same client-side conversation history as non-streaming version
-- Immediate feedback for long responses
+- Same limitations as non-streaming published app client
 - Type `new` to start a fresh conversation
 - Press `Ctrl+C` to exit
 

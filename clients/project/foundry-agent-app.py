@@ -87,7 +87,6 @@ os.environ["AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED"] = "true"
 
 from azure.identity import DefaultAzureCredential
 from azure.ai.projects import AIProjectClient
-
 # Tracing imports for Azure Monitor / Application Insights
 from azure.core.settings import settings
 settings.tracing_implementation = "opentelemetry"  # Must be set before other tracing imports
