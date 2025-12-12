@@ -46,6 +46,7 @@ For interacting with published Agent Applications. These are simplified wrappers
 |------|-------------|
 | `foundry-app-client.py` | Client for published Agent Applications (stateless) |
 | `foundry-app-client-streaming.py` | Streaming client with real-time token output (stateless) |
+| `structured-output-client.py` | Test client for agents with JSON schema structured output |
 
 ### Ops Scripts (`ops/`)
 For programmatic agent management.
@@ -53,6 +54,7 @@ For programmatic agent management.
 | File | Description |
 |------|-------------|
 | `create-agent.py` | Create agents (interactive wizard or CI/CD mode) |
+| `create-structured-output-agent.py` | Create an agent with JSON schema structured output |
 | `update-agent.py` | Update existing agents (MCP settings, instructions, etc.) |
 
 ## Prerequisites
@@ -93,6 +95,9 @@ AZURE_AI_FOUNDRY_AGENT_NAME=your-agent-name
 # Required for foundry-app-client.py (Published Agent Application)
 # Format: https://<resource>.services.ai.azure.com/api/projects/<project>/applications/<app-name>/protocols/openai
 AZURE_AI_FOUNDRY_APP_ENDPOINT=https://your-resource.services.ai.azure.com/api/projects/your-project/applications/your-app-name/protocols/openai
+
+# Required for structured-output-client.py (Structured Output Test Agent)
+AZURE_AI_FOUNDRY_STRUCTURED_OUTPUT_APP_ENDPOINT=https://your-resource.services.ai.azure.com/api/projects/your-project/applications/structured-output-test-agent/protocols/openai
 
 # Knowledge Base MCP Configuration (for agents with KB tools)
 AZURE_AI_SEARCH_KB_MCP_ENDPOINT=https://<search>.search.windows.net/knowledgebases/<kb>/mcp?api-version=2025-11-01-Preview
@@ -213,6 +218,34 @@ python clients/published/foundry-app-client-streaming.py
 - Type `new` to start a fresh conversation
 - Press `Ctrl+C` to exit
 
+#### Structured Output Client (JSON Schema Responses)
+
+This script tests agents configured with structured JSON output. The agent always responds with a predefined JSON schema.
+
+```powershell
+# Run automated tests
+python clients/published/structured-output-client.py
+
+# Interactive mode for custom questions
+python clients/published/structured-output-client.py --interactive
+```
+
+**Expected Response Format:**
+```json
+{
+  "question": "<user's original question>",
+  "response": "<assistant's answer>"
+}
+```
+
+**Features:**
+- Tests structured output configured at agent creation time
+- Validates JSON schema adherence
+- Automated test suite with 3 sample questions
+- Interactive mode for custom testing
+
+**Note:** Structured output must be configured when creating the agent (see `ops/create-structured-output-agent.py`). It cannot be overridden at runtime for published agents.
+
 ### Ops Scripts (Agent Management)
 
 The `ops/` folder contains scripts for programmatic agent management.
@@ -231,6 +264,30 @@ python ops/create-agent.py --non-interactive --name my-agent
 # With Knowledge Base MCP tool
 python ops/create-agent.py --non-interactive --name my-kb-agent --with-kb
 ```
+
+#### Create Structured Output Agent
+
+Create an agent that always responds with structured JSON output:
+
+```powershell
+python ops/create-structured-output-agent.py
+```
+
+This creates an agent with a JSON schema that enforces responses in this format:
+```json
+{
+  "question": "<user's original question>",
+  "response": "<assistant's answer>"
+}
+```
+
+**Key Points:**
+- Uses `ResponseTextFormatConfigurationJsonSchema` with `strict=True`
+- No tools or knowledge base - focused on testing structured output
+- Must publish the agent in Azure AI Foundry portal after creation
+- Test with `clients/published/structured-output-client.py`
+
+**Important:** Structured output is configured at agent creation time and cannot be overridden at runtime when calling published agents. This is different from direct model calls where you can specify `text.format` per request.
 
 #### Update Agent
 
