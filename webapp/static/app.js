@@ -17,10 +17,11 @@ const state = {
     isStreaming: false, // Currently receiving response
     currentTools: {},  // Active tool cards by ID
     
-    // Typewriter effect state
-    textBuffer: '',           // Buffer of text waiting to be displayed
-    typewriterActive: false,  // Is typewriter animation running
-    typewriterSpeed: 12,      // Milliseconds per character (lower = faster)
+    // Smooth line reveal state
+    lineBuffer: '',           // Buffer accumulating text for current line
+    lineQueue: [],            // Lines waiting to be displayed
+    isRevealingLines: false,  // Is line reveal animation running
+    lineRevealDelay: 80,      // Delay between lines (ms)
     currentMessageElements: null, // Current message being typed
 };
 
@@ -138,135 +139,174 @@ function createAssistantMessage() {
 }
 
 /**
- * Add streaming text to the current message with typewriter effect
+ * Add streaming text - buffers into lines for smooth reveal
  */
 function appendText(messageElements, text) {
-    // Add text to buffer
-    state.textBuffer += text;
     state.currentMessageElements = messageElements;
     
-    // Start typewriter if not already running
-    if (!state.typewriterActive) {
-        state.typewriterActive = true;
-        runTypewriter();
+    // Add text to line buffer
+    state.lineBuffer += text;
+    
+    // Check for complete lines (ending with newline or sentence-ending punctuation followed by space)
+    while (true) {
+        // Look for natural break points: newlines, or sentence ends
+        const newlineIndex = state.lineBuffer.indexOf('\n');
+        const sentenceMatch = state.lineBuffer.match(/[.!?]\s/);
+        
+        let breakIndex = -1;
+        
+        if (newlineIndex !== -1 && (!sentenceMatch || newlineIndex < sentenceMatch.index)) {
+            breakIndex = newlineIndex + 1;
+        } else if (sentenceMatch) {
+            breakIndex = sentenceMatch.index + 2; // Include punctuation and space
+        }
+        
+        if (breakIndex !== -1) {
+            // Extract the line
+            const line = state.lineBuffer.substring(0, breakIndex);
+            state.lineBuffer = state.lineBuffer.substring(breakIndex);
+            
+            // Queue the line for display
+            if (line.trim()) {
+                state.lineQueue.push(line);
+            }
+        } else {
+            break;
+        }
+    }
+    
+    // Start revealing lines if not already running
+    if (!state.isRevealingLines && state.lineQueue.length > 0) {
+        state.isRevealingLines = true;
+        revealNextLine();
     }
 }
 
 /**
- * Typewriter effect - displays buffered text character by character
+ * Reveal the next line with a smooth animation
  */
-function runTypewriter() {
+function revealNextLine() {
     if (!state.currentMessageElements) {
-        state.typewriterActive = false;
+        state.isRevealingLines = false;
         return;
     }
     
     const messageElements = state.currentMessageElements;
     
-    // Get or create the text span
-    let textSpan = messageElements.textContent.querySelector('.streaming-text');
-    if (!textSpan) {
-        textSpan = document.createElement('span');
-        textSpan.className = 'streaming-text';
-        messageElements.textContent.appendChild(textSpan);
+    // Get or create the text container
+    let textContainer = messageElements.textContent.querySelector('.streaming-lines');
+    if (!textContainer) {
+        textContainer = document.createElement('div');
+        textContainer.className = 'streaming-lines';
+        messageElements.textContent.appendChild(textContainer);
     }
     
-    // Remove cursor if exists
-    const cursor = messageElements.textContent.querySelector('.streaming-cursor');
-    if (cursor) cursor.remove();
-    
-    // Determine how many characters to show at once
-    // Show more at once for faster perceived speed, especially for word boundaries
-    let charsToShow = 1;
-    
-    if (state.textBuffer.length > 0) {
-        const nextChar = state.textBuffer[0];
+    if (state.lineQueue.length > 0) {
+        // Get the next line
+        const line = state.lineQueue.shift();
         
-        // Show whole words or punctuation sequences at once for smoother reading
-        if (nextChar === ' ' || nextChar === '\n') {
-            charsToShow = 1;
-        } else {
-            // Find next word boundary (space, newline, or punctuation)
-            const match = state.textBuffer.match(/^[^\s.,!?;:\n]+/);
-            if (match && match[0].length <= 8) {
-                // Show short words (up to 8 chars) all at once
-                charsToShow = match[0].length;
-            } else {
-                // For longer content, show 2-4 chars at a time
-                charsToShow = Math.min(3, state.textBuffer.length);
-            }
-        }
-    }
-    
-    if (state.textBuffer.length > 0) {
-        // Extract characters to display
-        const chars = state.textBuffer.substring(0, charsToShow);
-        state.textBuffer = state.textBuffer.substring(charsToShow);
+        // Create a line element with animation
+        const lineEl = document.createElement('span');
+        lineEl.className = 'streaming-line';
+        lineEl.innerHTML = escapeHtml(line);
         
-        // Add to display
-        textSpan.innerHTML += escapeHtml(chars);
+        // Add to container (starts invisible due to CSS)
+        textContainer.appendChild(lineEl);
         
-        // Add cursor back
-        const cursorSpan = document.createElement('span');
-        cursorSpan.className = 'streaming-cursor';
-        messageElements.textContent.appendChild(cursorSpan);
+        // Trigger animation after a tiny delay (allows CSS transition to work)
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                lineEl.classList.add('visible');
+            });
+        });
         
-        // Scroll to keep text visible
         scrollToBottom();
         
-        // Calculate delay - faster for spaces/newlines, normal for text
-        let delay = state.typewriterSpeed;
-        if (chars.includes('\n')) {
-            delay = state.typewriterSpeed * 3; // Pause at line breaks
-        } else if (chars.includes('.') || chars.includes('!') || chars.includes('?')) {
-            delay = state.typewriterSpeed * 2; // Pause at sentence ends
-        }
+        // Schedule next line
+        const delay = state.lineRevealDelay + (line.length * 2); // Slightly longer for longer lines
+        setTimeout(revealNextLine, delay);
         
-        // Continue typewriter
-        setTimeout(runTypewriter, delay);
+    } else if (state.lineBuffer.length > 0 && !state.isStreaming) {
+        // No more lines in queue, but buffer has remaining text - flush it
+        const lineEl = document.createElement('span');
+        lineEl.className = 'streaming-line';
+        lineEl.innerHTML = escapeHtml(state.lineBuffer);
+        state.lineBuffer = '';
+        
+        textContainer.appendChild(lineEl);
+        
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                lineEl.classList.add('visible');
+            });
+        });
+        
+        scrollToBottom();
+        state.isRevealingLines = false;
+        
+    } else if (state.isStreaming) {
+        // Still streaming, check again soon
+        setTimeout(revealNextLine, 30);
     } else {
-        // Buffer empty - add cursor and wait for more text
-        const cursorSpan = document.createElement('span');
-        cursorSpan.className = 'streaming-cursor';
-        messageElements.textContent.appendChild(cursorSpan);
-        
-        // Check again shortly in case more text arrives
-        if (state.isStreaming) {
-            setTimeout(runTypewriter, 50);
-        } else {
-            state.typewriterActive = false;
-        }
+        state.isRevealingLines = false;
     }
 }
 
 /**
- * Wait for typewriter buffer to empty
+ * Wait for all lines to be revealed
  */
-async function waitForTypewriter() {
+async function waitForLineReveal() {
+    // Maximum wait time to prevent infinite hangs
+    const maxWait = 10000; // 10 seconds
+    const startTime = Date.now();
+    
     return new Promise(resolve => {
         const check = () => {
-            if (state.textBuffer.length === 0 && !state.typewriterActive) {
+            // Timeout safety
+            if (Date.now() - startTime > maxWait) {
+                console.warn('Line reveal timeout - forcing completion');
+                state.isRevealingLines = false;
+                resolve();
+                return;
+            }
+            
+            // Check if done
+            if (state.lineQueue.length === 0 && 
+                state.lineBuffer.length === 0 && 
+                !state.isRevealingLines) {
                 resolve();
             } else {
                 setTimeout(check, 50);
             }
         };
-        check();
+        // Give a moment for any final lines to be queued
+        setTimeout(check, 100);
     });
 }
 
 /**
- * Finalize the streaming message (remove cursor, format markdown)
+ * Finalize the streaming message
  */
 async function finalizeMessage(messageElements, fullText) {
-    // Wait for typewriter to finish displaying all buffered text
-    await waitForTypewriter();
+    // Flush any remaining buffer (including non-trimmed content)
+    if (state.lineBuffer.length > 0) {
+        state.lineQueue.push(state.lineBuffer);
+        state.lineBuffer = '';
+    }
     
-    // Remove cursor
-    const cursor = messageElements.textContent.querySelector('.streaming-cursor');
-    if (cursor) cursor.remove();
+    // Start revealing if there are queued lines
+    if (state.lineQueue.length > 0 && !state.isRevealingLines) {
+        state.isRevealingLines = true;
+        revealNextLine();
+    }
     
-    // Format the text with basic markdown
+    // Wait for all lines to be revealed (with timeout safety)
+    await waitForLineReveal();
+    
+    // Ensure reveal state is cleared
+    state.isRevealingLines = false;
+    
+    // Replace with formatted markdown
     const formattedText = formatMarkdown(fullText);
     messageElements.textContent.innerHTML = formattedText;
     
@@ -275,7 +315,8 @@ async function finalizeMessage(messageElements, fullText) {
     
     // Clear state
     state.currentMessageElements = null;
-    state.textBuffer = '';
+    state.lineBuffer = '';
+    state.lineQueue = [];
 }
 
 // =============================================================================
@@ -519,8 +560,9 @@ async function sendMessage() {
     } catch (error) {
         console.error('Chat error:', error);
         state.isStreaming = false;
-        state.textBuffer = '';
-        state.typewriterActive = false;
+        state.lineBuffer = '';
+        state.lineQueue = [];
+        state.isRevealingLines = false;
         messageElements.textContent.innerHTML = `
             <p style="color: var(--accent-warning);">
                 ⚠️ Error: ${escapeHtml(error.message)}
@@ -619,8 +661,9 @@ function sendExample(button) {
 function startNewChat() {
     state.messages = [];
     state.currentTools = {};
-    state.textBuffer = '';
-    state.typewriterActive = false;
+    state.lineBuffer = '';
+    state.lineQueue = [];
+    state.isRevealingLines = false;
     state.currentMessageElements = null;
     
     // Clear messages and show welcome

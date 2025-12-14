@@ -354,6 +354,23 @@ html, body {
     51%, 100% { opacity: 0; }
 }
 
+/* Smooth line-by-line reveal (snowflake effect) */
+.streaming-lines {
+    display: block;
+}
+
+.streaming-line {
+    display: inline;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 0.35s ease-out, transform 0.35s ease-out;
+}
+
+.streaming-line.visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
 /* =============================================================================
    Tool Cards - ChatGPT Style
    ============================================================================= */
