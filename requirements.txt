@@ -3,6 +3,10 @@ openai
 azure-identity
 python-dotenv
 
+# Web App (for webapp/ folder)
+fastapi
+uvicorn[standard]
+
 # Tracing & Telemetry (for capturing duration, tokens, cost)
 opentelemetry-sdk
 azure-core-tracing-opentelemetry
