@@ -16,6 +16,12 @@ const state = {
     messages: [],      // Conversation history
     isStreaming: false, // Currently receiving response
     currentTools: {},  // Active tool cards by ID
+    
+    // Typewriter effect state
+    textBuffer: '',           // Buffer of text waiting to be displayed
+    typewriterActive: false,  // Is typewriter animation running
+    typewriterSpeed: 12,      // Milliseconds per character (lower = faster)
+    currentMessageElements: null, // Current message being typed
 };
 
 // =============================================================================
@@ -89,7 +95,7 @@ function addUserMessage(content) {
             <div class="avatar user">${icons.user}</div>
             <span class="sender-name">You</span>
         </div>
-        <div class="message-content">
+        <div class="message-bubble">
             <p>${escapeHtml(content)}</p>
         </div>
     `;
@@ -113,7 +119,7 @@ function createAssistantMessage() {
             <div class="avatar assistant">${icons.assistant}</div>
             <span class="sender-name">Foundry Agent</span>
         </div>
-        <div class="message-content">
+        <div class="message-bubble">
             <div class="tool-cards"></div>
             <div class="text-content"></div>
             <div class="citations-container"></div>
@@ -132,11 +138,33 @@ function createAssistantMessage() {
 }
 
 /**
- * Add streaming text to the current message
+ * Add streaming text to the current message with typewriter effect
  */
 function appendText(messageElements, text) {
-    let textSpan = messageElements.textContent.querySelector('.streaming-text');
+    // Add text to buffer
+    state.textBuffer += text;
+    state.currentMessageElements = messageElements;
     
+    // Start typewriter if not already running
+    if (!state.typewriterActive) {
+        state.typewriterActive = true;
+        runTypewriter();
+    }
+}
+
+/**
+ * Typewriter effect - displays buffered text character by character
+ */
+function runTypewriter() {
+    if (!state.currentMessageElements) {
+        state.typewriterActive = false;
+        return;
+    }
+    
+    const messageElements = state.currentMessageElements;
+    
+    // Get or create the text span
+    let textSpan = messageElements.textContent.querySelector('.streaming-text');
     if (!textSpan) {
         textSpan = document.createElement('span');
         textSpan.className = 'streaming-text';
@@ -147,20 +175,93 @@ function appendText(messageElements, text) {
     const cursor = messageElements.textContent.querySelector('.streaming-cursor');
     if (cursor) cursor.remove();
     
-    // Append text and add cursor
-    textSpan.innerHTML += escapeHtml(text);
+    // Determine how many characters to show at once
+    // Show more at once for faster perceived speed, especially for word boundaries
+    let charsToShow = 1;
     
-    const cursorSpan = document.createElement('span');
-    cursorSpan.className = 'streaming-cursor';
-    messageElements.textContent.appendChild(cursorSpan);
+    if (state.textBuffer.length > 0) {
+        const nextChar = state.textBuffer[0];
+        
+        // Show whole words or punctuation sequences at once for smoother reading
+        if (nextChar === ' ' || nextChar === '\n') {
+            charsToShow = 1;
+        } else {
+            // Find next word boundary (space, newline, or punctuation)
+            const match = state.textBuffer.match(/^[^\s.,!?;:\n]+/);
+            if (match && match[0].length <= 8) {
+                // Show short words (up to 8 chars) all at once
+                charsToShow = match[0].length;
+            } else {
+                // For longer content, show 2-4 chars at a time
+                charsToShow = Math.min(3, state.textBuffer.length);
+            }
+        }
+    }
     
-    scrollToBottom();
+    if (state.textBuffer.length > 0) {
+        // Extract characters to display
+        const chars = state.textBuffer.substring(0, charsToShow);
+        state.textBuffer = state.textBuffer.substring(charsToShow);
+        
+        // Add to display
+        textSpan.innerHTML += escapeHtml(chars);
+        
+        // Add cursor back
+        const cursorSpan = document.createElement('span');
+        cursorSpan.className = 'streaming-cursor';
+        messageElements.textContent.appendChild(cursorSpan);
+        
+        // Scroll to keep text visible
+        scrollToBottom();
+        
+        // Calculate delay - faster for spaces/newlines, normal for text
+        let delay = state.typewriterSpeed;
+        if (chars.includes('\n')) {
+            delay = state.typewriterSpeed * 3; // Pause at line breaks
+        } else if (chars.includes('.') || chars.includes('!') || chars.includes('?')) {
+            delay = state.typewriterSpeed * 2; // Pause at sentence ends
+        }
+        
+        // Continue typewriter
+        setTimeout(runTypewriter, delay);
+    } else {
+        // Buffer empty - add cursor and wait for more text
+        const cursorSpan = document.createElement('span');
+        cursorSpan.className = 'streaming-cursor';
+        messageElements.textContent.appendChild(cursorSpan);
+        
+        // Check again shortly in case more text arrives
+        if (state.isStreaming) {
+            setTimeout(runTypewriter, 50);
+        } else {
+            state.typewriterActive = false;
+        }
+    }
+}
+
+/**
+ * Wait for typewriter buffer to empty
+ */
+async function waitForTypewriter() {
+    return new Promise(resolve => {
+        const check = () => {
+            if (state.textBuffer.length === 0 && !state.typewriterActive) {
+                resolve();
+            } else {
+                setTimeout(check, 50);
+            }
+        };
+        check();
+    });
 }
 
 /**
  * Finalize the streaming message (remove cursor, format markdown)
  */
-function finalizeMessage(messageElements, fullText) {
+async function finalizeMessage(messageElements, fullText) {
+    // Wait for typewriter to finish displaying all buffered text
+    await waitForTypewriter();
+    
     // Remove cursor
     const cursor = messageElements.textContent.querySelector('.streaming-cursor');
     if (cursor) cursor.remove();
@@ -171,6 +272,10 @@ function finalizeMessage(messageElements, fullText) {
     
     // Store in history
     state.messages.push({ role: 'assistant', content: fullText });
+    
+    // Clear state
+    state.currentMessageElements = null;
+    state.textBuffer = '';
 }
 
 // =============================================================================
@@ -405,18 +510,27 @@ async function sendMessage() {
             }
         }
         
-        // Finalize message
-        finalizeMessage(messageElements, fullText);
+        // Mark streaming as done (but typewriter may still be running)
+        state.isStreaming = false;
+        
+        // Finalize message (wait for typewriter to complete)
+        await finalizeMessage(messageElements, fullText);
         
     } catch (error) {
         console.error('Chat error:', error);
+        state.isStreaming = false;
+        state.textBuffer = '';
+        state.typewriterActive = false;
         messageElements.textContent.innerHTML = `
             <p style="color: var(--accent-warning);">
                 ⚠️ Error: ${escapeHtml(error.message)}
             </p>
         `;
     } finally {
-        setStreaming(false);
+        // Re-enable input
+        elements.sendBtn.disabled = false;
+        elements.userInput.disabled = false;
+        elements.userInput.focus();
     }
 }
 
@@ -505,6 +619,9 @@ function sendExample(button) {
 function startNewChat() {
     state.messages = [];
     state.currentTools = {};
+    state.textBuffer = '';
+    state.typewriterActive = false;
+    state.currentMessageElements = null;
     
     // Clear messages and show welcome
     elements.messages.innerHTML = '';
